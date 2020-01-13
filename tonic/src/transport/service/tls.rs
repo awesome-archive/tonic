@@ -1,9 +1,9 @@
 use super::io::BoxedIo;
-use crate::transport::{Certificate, Identity};
+use crate::transport::{server::Connected, Certificate, Identity};
 #[cfg(feature = "tls-roots")]
 use rustls_native_certs;
 use std::{fmt, sync::Arc};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "tls")]
 use tokio_rustls::{
     rustls::{ClientConfig, NoClientAuth, ServerConfig, Session},
@@ -80,7 +80,10 @@ impl TlsConnector {
         })
     }
 
-    pub(crate) async fn connect(&self, io: TcpStream) -> Result<BoxedIo, crate::Error> {
+    pub(crate) async fn connect<I>(&self, io: I) -> Result<BoxedIo, crate::Error>
+    where
+        I: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
         let tls_io = {
             let dns = DNSNameRef::try_from_ascii_str(self.domain.as_str())?.to_owned();
 
@@ -154,14 +157,17 @@ impl TlsAcceptor {
         })
     }
 
-    pub(crate) async fn connect(&self, io: TcpStream) -> Result<BoxedIo, crate::Error> {
-        let io = {
-            let acceptor = RustlsAcceptor::from(self.inner.clone());
-            let tls = acceptor.accept(io).await?;
-            BoxedIo::new(tls)
-        };
+    pub(crate) async fn accept<IO>(
+        &self,
+        io: IO,
+    ) -> Result<tokio_rustls::server::TlsStream<IO>, crate::Error>
+    where
+        IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
+    {
+        let acceptor = RustlsAcceptor::from(self.inner.clone());
+        let tls = acceptor.accept(io).await?;
 
-        Ok(io)
+        Ok(tls)
     }
 }
 

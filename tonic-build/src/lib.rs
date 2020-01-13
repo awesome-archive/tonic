@@ -53,7 +53,7 @@
 #![doc(
     html_logo_url = "https://github.com/hyperium/tonic/raw/master/.github/assets/tonic-docs.png"
 )]
-#![doc(html_root_url = "https://docs.rs/tonic-build/0.1.0-alpha.6")]
+#![doc(html_root_url = "https://docs.rs/tonic-build/0.1.0-beta.1")]
 #![doc(issue_tracker_base_url = "https://github.com/hyperium/tonic/issues/")]
 #![doc(test(no_crate_inject, attr(deny(rust_2018_idioms))))]
 
@@ -76,6 +76,7 @@ mod server;
 pub struct Builder {
     build_client: bool,
     build_server: bool,
+    extern_path: Vec<(String, String)>,
     field_attributes: Vec<(String, String)>,
     type_attributes: Vec<(String, String)>,
     out_dir: Option<PathBuf>,
@@ -111,6 +112,17 @@ impl Builder {
         self
     }
 
+    /// Declare externally provided Protobuf package or type.
+    ///
+    /// Passed directly to `prost_build::Config.extern_path`.
+    pub fn extern_path(mut self, proto_path: impl AsRef<str>, rust_path: impl AsRef<str>) -> Self {
+        self.extern_path.push((
+            proto_path.as_ref().to_string(),
+            rust_path.as_ref().to_string(),
+        ));
+        self
+    }
+
     /// Add additional attribute to matched messages, enums, and one-offs.
     ///
     /// Passed directly to `prost_build::Config.field_attribute`.
@@ -142,6 +154,9 @@ impl Builder {
             .unwrap_or_else(|| PathBuf::from(std::env::var("OUT_DIR").unwrap()));
 
         config.out_dir(out_dir.clone());
+        for (proto_path, rust_path) in self.extern_path.iter() {
+            config.extern_path(proto_path, rust_path);
+        }
         for (path, attr) in self.field_attributes.iter() {
             config.field_attribute(path, attr);
         }
@@ -171,6 +186,7 @@ pub fn configure() -> Builder {
         build_client: true,
         build_server: true,
         out_dir: None,
+        extern_path: Vec::new(),
         field_attributes: Vec::new(),
         type_attributes: Vec::new(),
         #[cfg(feature = "rustfmt")]
@@ -251,13 +267,7 @@ impl prost_build::ServiceGenerator for ServiceGenerator {
             let clients = &self.clients;
 
             let client_service = quote::quote! {
-                /// Generated client implementations.
-                pub mod client {
-                    #![allow(unused_variables, dead_code, missing_docs)]
-                    use tonic::codegen::*;
-
-                    #clients
-                }
+                #clients
             };
 
             let code = format!("{}", client_service);
@@ -270,13 +280,7 @@ impl prost_build::ServiceGenerator for ServiceGenerator {
             let servers = &self.servers;
 
             let server_service = quote::quote! {
-                /// Generated server implementations.
-                pub mod server {
-                    #![allow(unused_variables, dead_code, missing_docs)]
-                    use tonic::codegen::*;
-
-                    #servers
-                }
+                #servers
             };
 
             let code = format!("{}", server_service);
@@ -332,4 +336,32 @@ fn replace_wellknown(proto_path: &str, method: &Method) -> (TokenStream, TokenSt
     };
 
     (request, response)
+}
+
+fn naive_snake_case(name: &str) -> String {
+    let mut s = String::new();
+    let mut it = name.chars().peekable();
+
+    while let Some(x) = it.next() {
+        s.push(x.to_ascii_lowercase());
+        if let Some(y) = it.peek() {
+            if y.is_uppercase() {
+                s.push('_');
+            }
+        }
+    }
+
+    s
+}
+
+#[test]
+fn test_snake_case() {
+    for case in &[
+        ("Service", "service"),
+        ("ThatHasALongName", "that_has_a_long_name"),
+        ("greeter", "greeter"),
+        ("ABCServiceX", "a_b_c_service_x"),
+    ] {
+        assert_eq!(naive_snake_case(case.0), case.1)
+    }
 }

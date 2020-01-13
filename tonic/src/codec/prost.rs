@@ -1,6 +1,6 @@
 use super::{Codec, Decoder, Encoder};
 use crate::{Code, Status};
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use prost::Message;
 use std::marker::PhantomData;
 
@@ -45,14 +45,10 @@ impl<T: Message> Encoder for ProstEncoder<T> {
     type Error = Status;
 
     fn encode(&mut self, item: Self::Item, buf: &mut BytesMut) -> Result<(), Self::Error> {
-        let len = item.encoded_len();
-
-        if buf.remaining_mut() < len {
-            buf.reserve(len);
-        }
-
         item.encode(buf)
-            .map_err(|_| unreachable!("Message only errors if not enough space"))
+            .expect("Message only errors if not enough space");
+
+        Ok(())
     }
 }
 
@@ -65,9 +61,11 @@ impl<U: Message + Default> Decoder for ProstDecoder<U> {
     type Error = Status;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        Message::decode(buf.take())
+        let item = Message::decode(buf)
             .map(Option::Some)
-            .map_err(from_decode_error)
+            .map_err(from_decode_error)?;
+
+        Ok(item)
     }
 }
 
